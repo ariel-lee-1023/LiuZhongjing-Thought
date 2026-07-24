@@ -1,41 +1,42 @@
 # LiuZhongjing-Thought
 
-Automated archive of **刘仲敬思想 (LZJT)** **PDF** materials only.
+Archive of **刘仲敬思想 (LZJT)** PDFs → clean Markdown.
 
-Source: 得到大脑 knowledge base topic [`40D9VmeJ`](https://biji.com/topic/40D9VmeJ) → folder **LZJT** and its sub-folders.
+## How to use (drop-folder workflow)
 
-## Strict rules
+1. Download the PDFs from the three LZJT sub-folders on biji.com.
+2. Upload them into the matching folders in this repo:
 
-- **Only PDFs** that live under the LZJT hierarchy are converted.
-- Converted with [Microsoft MarkItDown](https://github.com/microsoft/markitdown).
-- Output preserves the original classification:
+```
+incoming/
+├── LZJ-Writings/                        ← put the 10 PDFs here
+├── LZJ-FiguresCritique/                 ← put the 33 PDFs here
+└── LZJ-Lec-HistPhil_MoralPhil_Epist/    ← put the 83 PDFs here
+```
+
+3. Push (or just upload via the GitHub web UI).  
+   The Action will automatically:
+   - convert every `*.pdf` with MarkItDown
+   - write the `.md` files into the corresponding place under `content/LZJT/`
+   - delete the source PDF (keeps the repo light)
+   - commit & push the result
+
+You can also trigger it manually: **Actions → Convert incoming LZJT PDFs → Run workflow**.
+
+## Output layout
 
 ```
 content/
 └── LZJT/
     ├── LZJ-Writings/
+    │   └── <original-name>.md
     ├── LZJ-FiguresCritique/
-    ├── LZJ-Lec-HistPhil_MoralPhil_Epist/
-    └── ...
+    │   └── <original-name>.md
+    └── LZJ-Lec-HistPhil_MoralPhil_Epist/
+        └── <original-name>.md
 ```
 
-- Pure text notes, audio, and anything outside LZJT are **never** uploaded.
+## Notes
 
-## Secrets (already set)
-
-| Secret  | Value                          |
-|---------|--------------------------------|
-| `API`   | `gk_live_...` (得到大脑 API Key) |
-| `CLIENT`| `cli_...` (X-Client-ID)        |
-
-## How to run
-
-**Actions → Sync LZJT from 得到大脑 → Run workflow**
-
-Scheduled: every Sunday 02:00 UTC.
-
-## Important limitation
-
-The public OpenAPI currently returns only a small set of top-level notes for this topic.  
-If a run finishes with `PDFs processed: 0`, the deep folder contents (the bulk of the PDFs) are not yet exposed by the `/knowledge/notes` endpoint.  
-In that case we will need either a different API surface or a manual export path.
+- MarkItDown uses pdfminer (text extraction). Layout-heavy academic PDFs may need light post-editing.
+- The old 得到大脑 OpenAPI path is no longer used — the public API cannot see the deep folder PDFs.
