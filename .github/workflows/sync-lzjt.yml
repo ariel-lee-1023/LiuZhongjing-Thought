@@ -47,5 +47,7 @@ jobs:
             echo "No content changes"
           else
             git commit -m "chore: sync LZJT notes from 得到大脑 topic 40D9VmeJ $(date -u +%Y-%m-%d)"
+            # handle concurrent pushes (e.g. manual commits while the job was running)
+            git pull --rebase origin main
             git push
           fi
