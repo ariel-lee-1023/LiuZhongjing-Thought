@@ -9,9 +9,9 @@ Archive of **刘仲敬思想 (LZJT)** PDFs → clean Markdown.
 
 ```
 incoming/
-├── LZJ-Writings/                        ← put the 10 PDFs here
-├── LZJ-FiguresCritique/                 ← put the 33 PDFs here
-└── LZJ-Lec-HistPhil_MoralPhil_Epist/    ← put the 83 PDFs here
+├── LZJ-Writings/                       
+├── LZJ-FiguresCritique/                 
+└── LZJ-Lec-HistPhil_MoralPhil_Epist/    
 ```
 
 3. Push (or just upload via the GitHub web UI).  
