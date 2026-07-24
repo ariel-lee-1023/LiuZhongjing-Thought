@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """
-Sync LZJT notes from 得到大脑 topic 40D9VmeJ → Markdown in content/
+Sync ONLY PDFs that belong to the LZJT hierarchy from 得到大脑 topic 40D9VmeJ.
 
-Auth: repository secrets API (gk_live_...) and CLIENT (cli_...)
+Rules (strict):
+- Only process notes that have PDF attachments.
+- Only keep notes that are under the LZJT folder tree
+  (title / topics / path contains LZJT or known sub-folders).
+- Preserve classification by writing into content/LZJT/<subfolder>/...
+- Never write pure text notes, audio, or anything outside LZJT.
+
+Auth: repository secrets API + CLIENT
 Conversion: microsoft/markitdown[pdf]
 """
 
@@ -22,7 +29,14 @@ from markitdown import MarkItDown
 BASE_URL = "https://openapi.biji.com"
 TOPIC_ID = "40D9VmeJ"
 CONTENT_DIR = Path("content")
-PAGE_SIZE_HINT = 50  # API may ignore, we still paginate
+
+# Known LZJT sub-folders from the UI (used for path reconstruction)
+LZJT_SUBFOLDERS = {
+    "LZJ-Writings",
+    "LZJ-FiguresCritique",
+    "LZJ-Lec-HistPhil_MoralPhil_Epist",
+    "LZJT",
+}
 
 API_KEY = os.environ.get("API") or os.environ.get("BIJI_API_KEY")
 CLIENT_ID = os.environ.get("CLIENT") or os.environ.get("BIJI_CLIENT_ID")
@@ -35,7 +49,7 @@ HEADERS = {
     "Authorization": API_KEY,  # no Bearer prefix
     "X-Client-ID": CLIENT_ID,
     "Accept": "application/json",
-    "User-Agent": "LiuZhongjing-Thought-Sync/1.0",
+    "User-Agent": "LiuZhongjing-Thought-Sync/1.1",
 }
 
 
@@ -58,20 +72,18 @@ def list_all_notes() -> list[dict]:
             "/open/api/v1/resource/knowledge/notes",
             {"topic_id": TOPIC_ID, "page": page},
         )
-        batch = resp.get("data", {}).get("notes") or resp.get("data", {}).get("list") or []
-        if not batch:
-            # some responses put notes at top level
-            batch = resp.get("notes") or []
+        data = resp.get("data") or {}
+        batch = data.get("notes") or data.get("list") or resp.get("notes") or []
         if not batch:
             break
         notes.extend(batch)
-        # crude stop: if fewer than expected, done
-        if len(batch) < 10:
+        print(f"    got {len(batch)} notes")
+        if len(batch) < 5:
             break
         page += 1
-        if page > 100:  # safety
+        if page > 200:
             break
-    print(f"  total notes: {len(notes)}")
+    print(f"  total notes returned by API: {len(notes)}")
     return notes
 
 
@@ -83,29 +95,63 @@ def get_note_detail(note_id: str) -> dict:
     return resp.get("data", {}).get("note") or resp.get("data") or resp
 
 
-def safe_filename(title: str, note_id: str) -> str:
-    title = title or "untitled"
-    # keep CJK + alnum, collapse others
-    cleaned = re.sub(r"[^\w\u4e00-\u9fff\-]+", "_", title, flags=re.UNICODE)
-    cleaned = cleaned.strip("_ ")[:80] or "untitled"
-    return f"{note_id}__{cleaned}.md"
+def is_under_lzjt(detail: dict, title: str) -> bool:
+    """Heuristic: only keep notes that belong to the LZJT tree."""
+    title_l = (title or "").lower()
+    if "lzjt" in title_l or "lzj-" in title_l or "刘仲敬" in title or "阿姨" in title:
+        return True
+
+    # check topics array
+    for t in detail.get("topics") or []:
+        name = str(t.get("name") or t.get("topic_name") or "").lower()
+        if "lzjt" in name or "刘仲敬" in name:
+            return True
+
+    # check tags
+    for tag in detail.get("tags") or []:
+        name = str(tag.get("name") if isinstance(tag, dict) else tag).lower()
+        if "lzjt" in name or "lzj" in name:
+            return True
+
+    return False
+
+
+def guess_subfolder(detail: dict, title: str) -> str:
+    """Try to map to one of the known UI sub-folders."""
+    candidates = [title or ""]
+    for t in detail.get("topics") or []:
+        candidates.append(str(t.get("name") or ""))
+    for tag in detail.get("tags") or []:
+        candidates.append(str(tag.get("name") if isinstance(tag, dict) else tag))
+
+    text = " ".join(candidates)
+    for folder in LZJT_SUBFOLDERS:
+        if folder.lower() in text.lower():
+            return folder
+    # fallback
+    return "LZJT"
+
+
+def safe_name(name: str) -> str:
+    name = name or "untitled"
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff\-\.]+", "_", name, flags=re.UNICODE)
+    return cleaned.strip("_ ")[:120] or "untitled"
 
 
 def download_file(url: str, dest: Path) -> None:
-    # try with auth first, fall back without
     for use_auth in (True, False):
         headers = HEADERS if use_auth else {}
         try:
-            with requests.get(url, headers=headers, stream=True, timeout=120) as r:
+            with requests.get(url, headers=headers, stream=True, timeout=180) as r:
                 r.raise_for_status()
                 with open(dest, "wb") as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
             return
-        except requests.HTTPError as e:
+        except requests.HTTPError:
             if use_auth:
                 continue
-            raise e
+            raise
 
 
 def convert_pdf(pdf_path: Path) -> str:
@@ -121,7 +167,9 @@ def content_hash(text: str) -> str:
 def main() -> int:
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
     changed = 0
-    md_converter_ok = True
+    pdf_count = 0
+    skipped_non_lzjt = 0
+    skipped_no_pdf = 0
 
     try:
         notes = list_all_notes()
@@ -141,25 +189,27 @@ def main() -> int:
             print(f"  skip {note_id}: detail failed ({e})")
             continue
 
-        attachments = detail.get("attachments") or []
-        pdfs = [a for a in attachments if str(a.get("type", "")).lower() == "pdf" or
-                str(a.get("mime_type", "")).lower() == "application/pdf" or
-                str(a.get("name", "")).lower().endswith(".pdf")]
-
-        # also surface the note body itself if substantial
-        body = (detail.get("content") or "").strip()
-        if body and len(body) > 200 and not pdfs:
-            # pure text note → write as md
-            out_name = safe_filename(title, note_id)
-            out_path = CONTENT_DIR / out_name
-            header = f"# {title}\n\n> source note_id: `{note_id}`  \n> topic: `{TOPIC_ID}`\n\n"
-            full = header + body
-            if out_path.exists() and out_path.read_text(encoding="utf-8") == full:
-                continue
-            out_path.write_text(full, encoding="utf-8")
-            print(f"  wrote text note → {out_name}")
-            changed += 1
+        # 1. must be under LZJT
+        if not is_under_lzjt(detail, title):
+            skipped_non_lzjt += 1
             continue
+
+        # 2. only PDFs
+        attachments = detail.get("attachments") or []
+        pdfs = [
+            a for a in attachments
+            if str(a.get("type", "")).lower() == "pdf"
+            or str(a.get("mime_type", "")).lower() == "application/pdf"
+            or str(a.get("name", "")).lower().endswith(".pdf")
+        ]
+
+        if not pdfs:
+            skipped_no_pdf += 1
+            continue
+
+        subfolder = guess_subfolder(detail, title)
+        out_dir = CONTENT_DIR / "LZJT" / subfolder
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         for att in pdfs:
             url = att.get("url") or att.get("download_url")
@@ -167,6 +217,7 @@ def main() -> int:
             if not url:
                 continue
 
+            pdf_count += 1
             with tempfile.TemporaryDirectory() as tmp:
                 pdf_path = Path(tmp) / name
                 try:
@@ -179,19 +230,20 @@ def main() -> int:
                     md_text = convert_pdf(pdf_path)
                 except Exception as e:
                     print(f"  convert failed {name}: {e}")
-                    md_converter_ok = False
                     continue
 
                 if not md_text.strip():
                     print(f"  empty conversion for {name}")
                     continue
 
-                out_name = safe_filename(title or name, note_id)
-                out_path = CONTENT_DIR / out_name
+                base = safe_name(Path(name).stem or title or note_id)
+                out_path = out_dir / f"{base}.md"
+
                 header = (
-                    f"# {title or name}\n\n"
+                    f"# {title or base}\n\n"
                     f"> source note_id: `{note_id}`  \n"
-                    f"> attachment: `{name}`  \n"
+                    f"> original PDF: `{name}`  \n"
+                    f"> folder: `LZJT/{subfolder}`  \n"
                     f"> topic: `{TOPIC_ID}`  \n"
                     f"> converted with markitdown\n\n"
                 )
@@ -200,15 +252,17 @@ def main() -> int:
                 if out_path.exists():
                     existing = out_path.read_text(encoding="utf-8")
                     if content_hash(existing) == content_hash(full):
-                        continue  # unchanged
+                        continue
 
                 out_path.write_text(full, encoding="utf-8")
-                print(f"  wrote PDF → {out_name}")
+                print(f"  wrote PDF → LZJT/{subfolder}/{out_path.name}")
                 changed += 1
 
-    print(f"\nDone. {changed} file(s) written/updated.")
-    if not md_converter_ok:
-        print("WARNING: some conversions failed", file=sys.stderr)
+    print(f"\nDone.")
+    print(f"  PDFs processed : {pdf_count}")
+    print(f"  files written  : {changed}")
+    print(f"  skipped (not LZJT): {skipped_non_lzjt}")
+    print(f"  skipped (no PDF)  : {skipped_no_pdf}")
     return 0
 
 
