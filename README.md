@@ -2,6 +2,11 @@
 
 Archive of **刘仲敬思想 (LZJT)** PDFs → clean Markdown.
 
+> **Intellectual Property Notice**  
+> All original texts by **Liu Zhongjing (刘仲敬)** remain his exclusive intellectual property.  
+> This repository claims no ownership of the underlying content.  
+> See [NOTICE.md](NOTICE.md) for the full bilingual disclaimer.
+
 ## How to use (drop-folder workflow)
 
 1. Download the PDFs from the three LZJT sub-folders on biji.com.
