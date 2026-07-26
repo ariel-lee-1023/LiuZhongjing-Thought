@@ -41,7 +41,7 @@ CJK = r"[\u2e80-\u2eff\u2f00-\u2fdf\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00
 
 def safe_name(name: str) -> str:
     name = name or "untitled"
-    cleaned = re.sub(r"[^\w\u4e00-\u9fff\-\.]+\", "_", name, flags=re.UNICODE)
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff\-\.]+", "_", name, flags=re.UNICODE)
     return cleaned.strip("_ ")[:120] or "untitled"
 
 
