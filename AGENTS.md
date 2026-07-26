@@ -4,6 +4,15 @@
 
 This repository is the **LiuZhongjing-Thought (LZJT)** knowledge base — a non-commercial archival conversion of 刘仲敬 (Liu Zhongjing) materials into clean Markdown.
 
+## Recommended pairing
+
+| Role | Repository |
+|------|------------|
+| **Knowledge base** (primary sources) | **this repo** — `content/LZJT/` |
+| **Analytical perspective / skill** | [liu-zhongjing](https://github.com/ariel-lee-1023/liu-zhongjing) |
+
+Use them together: search this knowledge base first for the relevant text, then apply the interpretive frame from the skill.
+
 ## Authoritative content location
 
 All converted texts live under:

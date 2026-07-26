@@ -4,6 +4,12 @@
 
 Archive of **刘仲敬思想 (LZJT)** PDFs → clean Markdown.
 
+> **Recommended pairing**  
+> This repository is the **knowledge base**.  
+> For the analytical perspective / skill that knows how to read and apply it, use:  
+> **[liu-zhongjing](https://github.com/ariel-lee-1023/liu-zhongjing)**  
+> One supplies the primary sources; the other supplies the interpretive frame.
+
 > **Intellectual Property Notice**  
 > All original texts by **Liu Zhongjing (刘仲敬)** remain his exclusive intellectual property.  
 > This repository claims no ownership of the underlying content.  
