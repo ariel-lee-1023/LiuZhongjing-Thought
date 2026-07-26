@@ -12,9 +12,12 @@ Directory mapping (strict):
 
 After successful conversion the source PDF is deleted (keeps the repo light).
 
-Extraction: PyMuPDF (fitz) — better CJK continuity, no hallucinated tables.
-Post-process: aggressive CJK space cleanup, page-number / form-feed removal,
-paragraph normalization. Designed for continuous Chinese prose essays.
+Extraction: PyMuPDF (fitz) — continuous CJK text, no hallucinated tables.
+Post-process:
+  1. Aggressive CJK inter-character space cleanup
+  2. Soft page-break handling (join mid-sentence across pages)
+  3. Intelligent paragraph reflow for Chinese prose
+  4. Force new paragraphs on 问：/答： and section headers
 """
 
 from __future__ import annotations
@@ -54,7 +57,6 @@ def extract_text(pdf_path: Path) -> str:
     doc = fitz.open(pdf_path)
     parts: list[str] = []
     for page in doc:
-        # "text" mode gives reading-order text; flags suppress some artifacts
         t = page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_DEHYPHENATE)
         parts.append(t)
     doc.close()
@@ -63,60 +65,88 @@ def extract_text(pdf_path: Path) -> str:
 
 def fix_cjk_spacing(text: str) -> str:
     """Remove spurious spaces that pdf extractors insert between CJK glyphs."""
-    # Core: CJK + spaces + CJK → CJKCJK
     text = re.sub(rf"({CJK})\s+(?={CJK})", r"\1", text)
 
-    # CJK + spaces + CJK punctuation → stick
     punct = r"[，。！？；：、“”‘’（）【】《》〈〉「」『』、]"
     text = re.sub(rf"({CJK})\s+({punct})", r"\1\2", text)
     text = re.sub(rf"({punct})\s+({CJK})", r"\1\2", text)
 
-    # Opening / closing brackets & quotes: remove adjacent spaces
     text = re.sub(rf"([（【《〈「『“‘])\s+", r"\1", text)
     text = re.sub(rf"\s+([）】》〉」』”’])", r"\1", text)
 
-    # Digit sequences that were spaced out (e.g. 1 7 8 5 → 1785)
     text = re.sub(r"(?<=\d)\s+(?=\d)", "", text)
-
-    # Year ranges 1785 ~ 1850 → 1785~1850
     text = re.sub(r"(?<=\d)\s*[~～—–-]\s*(?=\d)", "~", text)
 
-    # Collapse residual runs of spaces (keep single space for mixed CJK/Latin)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text
 
 
+def reflow_paragraphs(text: str) -> str:
+    """
+    Rejoin visual lines into readable Chinese paragraphs.
+
+    Key behaviours:
+    - Soft blanks (page breaks / layout gaps) do NOT force a paragraph break
+      unless the previous line already ends with sentence-terminal punctuation.
+    - Pure page numbers are dropped silently and never force a break.
+    - Lines starting with 问：/答： or common section markers force a new paragraph.
+    - Consecutive non-terminal lines are concatenated (no space for pure CJK).
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
+    raw_lines = [ln.rstrip() for ln in text.split("\n")]
+
+    terminal = re.compile(r"[。！？；…」』”’]$")
+    force_start = re.compile(
+        r"^(问[:：]|答[:：]|内容概要|金句收集|正文|"
+        r"第[一二三四五六七八九十百]+[章节讲部]?|"
+        r"[（(]?[0-9]{1,2}[)）]|[0-9]+\.|[一二三四五六七八九十]+、)"
+    )
+
+    paras: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if not buf:
+            return
+        p = "".join(buf)
+        p = re.sub(r" {2,}", " ", p).strip()
+        if p:
+            paras.append(p)
+        buf.clear()
+
+    i = 0
+    while i < len(raw_lines):
+        ln = raw_lines[i].strip()
+
+        # Silent skip — page numbers & pure noise never break paragraphs
+        if re.fullmatch(r"\d{1,4}", ln) or ln in {"·", "•", "—", "–", "-", "…"}:
+            i += 1
+            continue
+
+        if not ln:
+            # Soft blank: only hard-break when the current sentence is already finished
+            if buf and terminal.search(buf[-1]):
+                flush()
+            i += 1
+            continue
+
+        # Hard break conditions
+        if buf and (force_start.match(ln) or terminal.search(buf[-1])):
+            flush()
+
+        buf.append(ln)
+        i += 1
+
+    flush()
+    return "\n\n".join(paras)
+
+
 def clean_layout(text: str) -> str:
-    """Normalize page breaks, isolated page numbers, and excessive blank lines."""
-    # Normalize newlines
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    # Form-feed / page break markers
-    text = text.replace("\f", "\n")
-
-    lines = text.split("\n")
-    cleaned: list[str] = []
-    for line in lines:
-        s = line.strip()
-        # Drop pure page-number lines (common in these scans/exports)
-        if re.fullmatch(r"\d{1,4}", s):
-            continue
-        # Drop very short noise lines that are just punctuation or symbols
-        if s in {"", "·", "•", "—", "–", "-", "…"}:
-            cleaned.append("")  # keep as blank for paragraph
-            continue
-        cleaned.append(line.rstrip())
-
-    text = "\n".join(cleaned)
-
-    # Apply CJK fix after line-level cleanup
+    """Full pipeline: CJK space fix → intelligent reflow."""
     text = fix_cjk_spacing(text)
-
-    # Strip trailing spaces per line again
-    text = "\n".join(ln.rstrip() for ln in text.split("\n"))
-
-    # Collapse 3+ blank lines → 2 (paragraph separator)
+    text = reflow_paragraphs(text)
+    # Final safety collapse of any residual excessive blanks
     text = re.sub(r"\n{3,}", "\n\n", text)
-
     return text.strip()
 
 
@@ -140,7 +170,7 @@ def convert_one(pdf_path: Path, out_dir: Path) -> bool:
         f"# {pdf_path.stem}\n\n"
         f"> original PDF: `{pdf_path.name}`  \n"
         f"> folder: `LZJT/{out_dir.name}`  \n"
-        f"> converted with PyMuPDF + CJK layout cleanup\n\n"
+        f"> converted with PyMuPDF + CJK reflow\n\n"
     )
     full = header + text
 
