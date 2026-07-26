@@ -26,10 +26,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install markitdown
+      - name: Install PyMuPDF
         run: |
           python -m pip install --upgrade pip
-          pip install "markitdown[pdf]"
+          pip install pymupdf
 
       - name: Convert PDFs → Markdown
         run: python scripts/convert_incoming_pdfs.py

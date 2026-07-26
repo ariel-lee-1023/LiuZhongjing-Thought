@@ -21,7 +21,7 @@ incoming/
 
 3. Push (or just upload via the GitHub web UI).  
    The Action will automatically:
-   - convert every `*.pdf` with MarkItDown
+   - convert every `*.pdf` with **PyMuPDF** + CJK-aware layout cleanup
    - write the `.md` files into the corresponding place under `content/LZJT/`
    - delete the source PDF (keeps the repo light)
    - commit & push the result
@@ -43,5 +43,7 @@ content/
 
 ## Notes
 
-- MarkItDown uses pdfminer (text extraction). Layout-heavy academic PDFs may need light post-editing.
+- Extraction uses PyMuPDF (layout-aware, continuous CJK text).  
+  Post-processing removes inter-character spacing artifacts common in Chinese PDFs, isolated page numbers, and form-feed noise.  
+  This largely eliminates the “mysterious tables” and broken alignment that appeared with the previous MarkItDown/pdfminer path.
 - The old 得到大脑 OpenAPI path is no longer used — the public API cannot see the deep folder PDFs.
