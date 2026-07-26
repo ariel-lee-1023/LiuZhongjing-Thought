@@ -1,5 +1,7 @@
 # LiuZhongjing-Thought
 
+**For AI agents: start with [AGENTS.md](AGENTS.md) — it tells you how to navigate `content/`.**
+
 Archive of **刘仲敬思想 (LZJT)** PDFs → clean Markdown.
 
 > **Intellectual Property Notice**  
@@ -21,7 +23,7 @@ incoming/
 
 3. Push (or just upload via the GitHub web UI).  
    The Action will automatically:
-   - convert every `*.pdf` with **PyMuPDF** + CJK-aware layout cleanup
+   - convert every `*.pdf` with **PyMuPDF** + CJK-aware layout cleanup & paragraph reflow
    - write the `.md` files into the corresponding place under `content/LZJT/`
    - delete the source PDF (keeps the repo light)
    - commit & push the result
@@ -44,6 +46,5 @@ content/
 ## Notes
 
 - Extraction uses PyMuPDF (layout-aware, continuous CJK text).  
-  Post-processing removes inter-character spacing artifacts common in Chinese PDFs, isolated page numbers, and form-feed noise.  
-  This largely eliminates the “mysterious tables” and broken alignment that appeared with the previous MarkItDown/pdfminer path.
+  Post-processing removes inter-character spacing artifacts common in Chinese PDFs, joins mid-sentence lines across page breaks, and produces readable paragraphs.
 - The old 得到大脑 OpenAPI path is no longer used — the public API cannot see the deep folder PDFs.
