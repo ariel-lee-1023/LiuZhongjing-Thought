@@ -13,6 +13,8 @@ This repository is the **LiuZhongjing-Thought (LZJT)** knowledge base — a non-
 
 Use them together: search this knowledge base first for the relevant text, then apply the interpretive frame from the skill.
 
+人类用户建议：把本仓库当作知识库，搭配 [liu-zhongjing](https://github.com/ariel-lee-1023/liu-zhongjing) 使用——一个提供一手材料，一个提供分析视角。
+
 ## Authoritative content location
 
 All converted texts live under:
