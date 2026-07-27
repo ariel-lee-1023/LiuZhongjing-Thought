@@ -2,14 +2,12 @@
 """
 Optimize formatting of existing Markdown content under content/LZJT/.
 
-Applies the same CJK-aware cleanup + intelligent paragraph reflow used by
-convert_incoming_pdfs.py, plus light balancing of overlong paragraphs for
-mobile reading rhythm. Never rewrites author words; only layout.
+Applies CJK-aware cleanup + intelligent paragraph reflow + length balancing
+for mobile reading. Strong structural heading detection for the common
+LZJ interview / lecture layout (内容概要 / 金句收集 / 正文 + subsections).
 
-Detects simple section titles (short standalone lines ending in ： or matching
-common patterns) and gives them blank-line isolation + **bold** for hierarchy.
-
-Safe to re-run: only writes when content actually changes.
+Never rewrites author words; only layout, blank-line hierarchy, and
+markdown heading markers.
 """
 
 from __future__ import annotations
@@ -29,40 +27,73 @@ SUBFOLDERS = [
 
 CJK = r"[\u2e80-\u2eff\u2f00-\u2fdf\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]"
 
+# Exact structural titles that appear in almost every LZJ lecture/interview PDF
+STRUCTURAL = {
+    "内容概要",
+    "金句收集",
+    "正文",
+    "AI 的信息污染问题",
+    "学术定位的改变",
+    "对未来社会政治的潜在影响",
+}
+
+# Longer / more specific subsection titles that should also be isolated
+SUBSECTION_PAT = re.compile(
+    r"^(AI\s*的信息污染问题|学术定位的改变|对未来社会政治的潜在影响|"
+    r"内容概要|金句收集|正文|"
+    r"第[一二三四五六七八九十百]+[章节讲部]?|"
+    r"[【「].{1,30}[】」])$"
+)
+
+# TOC-style lines: title + lots of dots / leaders + page number
+TOC_LINE = re.compile(
+    r"^(.{2,40}?)\s*[.…·•\-—–]{4,}\s*\d{1,3}$"
+)
+
 
 def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def fix_cjk_spacing(text: str) -> str:
-    """Remove spurious spaces that pdf extractors insert between CJK glyphs."""
     text = re.sub(rf"({CJK})\s+(?={CJK})", r"\1", text)
-
     punct = r"[，。！？；：、“”‘’（）【】《》〈〉「」『』、]"
     text = re.sub(rf"({CJK})\s+({punct})", r"\1\2", text)
     text = re.sub(rf"({punct})\s+({CJK})", r"\1\2", text)
-
     text = re.sub(rf"([（【《〈「『“‘])\s+", r"\1", text)
     text = re.sub(rf"\s+([）】》〉」』”’])", r"\1", text)
-
     text = re.sub(r"(?<=\d)\s+(?=\d)", "", text)
     text = re.sub(r"(?<=\d)\s*[~～—–-]\s*(?=\d)", "~", text)
-
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text
 
 
-def reflow_paragraphs(text: str) -> str:
+def inject_structural_breaks(text: str) -> str:
     """
-    Rejoin visual lines into readable Chinese paragraphs, then balance length.
+    Force a hard line break before known structural titles even when the
+    PDF extractor glued them to the preceding or following prose.
+    This is the key fix for the '内容概要本次访谈…' / '正文阿姨您好…' problem.
+    """
+    # Protect already-isolated titles first
+    for title in sorted(STRUCTURAL, key=len, reverse=True):
+        # title glued to following text → title\ntext
+        text = re.sub(
+            rf"(?<![。！？；\n])({re.escape(title)})(?=[^\n\s。！？；：、“”])",
+            r"\n\1\n",
+            text,
+        )
+        # title glued to preceding text → text\ntitle
+        text = re.sub(
+            rf"([^\n\s。！？；：])({re.escape(title)})(?=\s|$|\n)",
+            r"\1\n\2\n",
+            text,
+        )
+    return text
 
-    - Soft blanks do not force break unless previous ends with terminal punct.
-    - Page numbers / pure noise dropped.
-    - Lines starting with 问：/答： or section markers force new para.
-    - Overlong paragraphs (> ~420 chars) are split at sentence boundaries
-      so each block stays mobile-friendly without altering any word.
-    """
+
+def reflow_paragraphs(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
+    text = inject_structural_breaks(text)
     raw_lines = [ln.rstrip() for ln in text.split("\n")]
 
     terminal = re.compile(r"[。！？；…」』”’]$")
@@ -71,13 +102,6 @@ def reflow_paragraphs(text: str) -> str:
         r"第[一二三四五六七八九十百]+[章节讲部]?|"
         r"[（(]?[0-9]{1,2}[)）]|[0-9]+\.|[一二三四五六七八九十]+、|"
         r"[【「].{1,20}[】」])"
-    )
-    # Potential major/second-level heading: short, ends with full-width colon,
-    # or pure topic announcer.
-    heading_like = re.compile(
-        r"^.{1,40}[:：]$|^[【「].{1,30}[】」]$|"
-        r"^对你的实际意义$|^LLM 年[:：].*$|"
-        r"^轉入 JD 後的年份[:：].*$"
     )
 
     paras: list[str] = []
@@ -106,7 +130,14 @@ def reflow_paragraphs(text: str) -> str:
             i += 1
             continue
 
-        if buf and (force_start.match(ln) or terminal.search(buf[-1]) or heading_like.match(ln)):
+        # Hard break on structural titles, TOC lines, force_start, or completed sentence
+        is_structural = (
+            ln in STRUCTURAL
+            or SUBSECTION_PAT.match(ln)
+            or TOC_LINE.match(ln)
+            or force_start.match(ln)
+        )
+        if buf and (is_structural or terminal.search(buf[-1])):
             flush()
 
         buf.append(ln)
@@ -114,14 +145,13 @@ def reflow_paragraphs(text: str) -> str:
 
     flush()
 
-    # Balance overlong paragraphs for mobile reading rhythm
+    # Balance overlong paragraphs
     balanced: list[str] = []
     max_len = 420
     for p in paras:
         if len(p) <= max_len:
             balanced.append(p)
             continue
-        # Split only at sentence-terminal punctuation; never cut mid-sentence
         parts = re.split(r"(?<=[。！？；…])", p)
         current = ""
         for part in parts:
@@ -135,18 +165,31 @@ def reflow_paragraphs(text: str) -> str:
         if current.strip():
             balanced.append(current.strip())
 
-    # Light heading formatting: short standalone ending in ： → **bold** + blanks
+    # Emit with proper heading isolation
     final: list[str] = []
     for p in balanced:
-        if heading_like.match(p) and len(p) < 45:
-            # major / second-level treatment
-            final.append("")  # ensure blank before
-            final.append(f"**{p}**")
-            final.append("")  # blank after
-        else:
+        # TOC line → keep as plain, single blank before if needed
+        if TOC_LINE.match(p):
+            if final and final[-1] != "":
+                final.append("")
             final.append(p)
+            continue
 
-    # Collapse any accidental multi-blanks while keeping single blank between paras
+        # Structural / subsection title → markdown heading style
+        if p in STRUCTURAL or SUBSECTION_PAT.match(p):
+            if final and final[-1] != "":
+                final.append("")
+            # major structural titles get ##, subsections get ###
+            if p in {"内容概要", "金句收集", "正文"}:
+                final.append(f"## {p}")
+            else:
+                final.append(f"### {p}")
+            final.append("")
+            continue
+
+        # Ordinary paragraph
+        final.append(p)
+
     text = "\n\n".join(x for x in final if x is not None)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -160,13 +203,10 @@ def clean_layout(text: str) -> str:
 
 
 def split_header_body(full: str) -> tuple[str, str]:
-    """Keep the leading # title + blockquote metadata intact; clean only body."""
     lines = full.splitlines(keepends=True)
     if not lines:
         return "", full
 
-    # Find end of header: first non-empty line after the > metadata block
-    # that does not start with # or >
     header_end = 0
     in_meta = False
     for i, ln in enumerate(lines):
