@@ -2,11 +2,12 @@
 """
 Optimize formatting of existing Markdown under content/LZJT/.
 
-Design:
-  - arrange by real structure, never invent mid-sentence titles
-  - drop PDF TOC entirely (any line with leader dots; TOC block after 内容概要)
-  - unglue only at line-start title+body artifacts
-  - never rewrite author words
+Rules:
+  - drop PDF TOC (leader dots OR compact page-number TOC like "正文 3xxx 4yyy")
+  - drop empty major headings left by prior runs
+  - enforce module order: 内容概要 → 金句收集 → 正文
+  - unglue only at line-start titles; never invent mid-sentence headings
+  - strip stray trailing ## / #
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ SUBFOLDERS = [
 
 CJK = r"[\u2e80-\u2eff\u2f00-\u2fdf\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]"
 
-MAJOR = {"内容概要", "金句收集", "正文"}
+MAJOR = ["内容概要", "金句收集", "正文"]  # ordered
+MAJOR_SET = set(MAJOR)
+
 SUBSECTION = {
     "对未来社会政治的潜在影响",
     "AI 的信息污染问题",
@@ -38,15 +41,21 @@ SUBSECTION = {
     "晚清到民国的国家认同建构过程",
     "国民党北伐后政治路径的形成",
     "答问环节",
+    "1929 年大萧条的深层原因与问题提出",
+    "1929年大萧条的深层原因与问题提出",
+    "权力扩张与民主政治的内在逻辑",
+    "一战后债务链、关税战与经济危机的延长",
+    "德苏易货贸易与走向第二次世界大战",
+    "二战后布雷顿森林体系的建立与演化",
+    "冷战后美元输出、全球化矛盾与当前体系前景",
 }
 
-# Any run of 4+ leader dots / ellipsis → TOC residue
 HAS_LEADER_DOTS = re.compile(r"[.…·•]{4,}")
-# Pure page / decorative
-JUNK = re.compile(r"^(\d{1,4}|[·•—–\-…]{1,8})$")
-# Page-number glued to title fragment: "3世界文明" / "45提问一"
+JUNK = re.compile(r"^(\d{1,4}|[·•—–\-…]{1,8}|#{1,6})$")
 PAGE_GLUE = re.compile(r"^\d{1,3}[\u4e00-\u9fff“\"「]")
 EXISTING_HEADING = re.compile(r"^#{1,6}\s+")
+TRAILING_HASH = re.compile(r"#{1,6}\s*$")
+COMPACT_TOC = re.compile(r"^正文\s*\d")
 
 
 def content_hash(text: str) -> str:
@@ -67,11 +76,10 @@ def fix_cjk_spacing(text: str) -> str:
 
 
 def unglue_leading_titles(text: str) -> str:
-    """Line-start title glued to body only — never mid-sentence."""
-    titles = sorted(MAJOR | SUBSECTION, key=len, reverse=True)
+    titles = sorted(MAJOR_SET | SUBSECTION, key=len, reverse=True)
     for title in titles:
         text = re.sub(
-            rf"(^|\n)({re.escape(title)})(?=[\u4e00-\u9fff“\"「『])",
+            rf"(^|\n)({re.escape(title)})(?=[\u4e00-\u9fff“\"「『答问])",
             r"\1\2\n",
             text,
         )
@@ -87,46 +95,43 @@ def is_toc_line(ln: str) -> bool:
         return True
     if PAGE_GLUE.match(ln):
         return True
+    if COMPACT_TOC.match(ln):
+        return True
+    nums = re.findall(r"(?<!\d)\d{1,3}(?!\d)", ln)
+    if len(nums) >= 4 and len(ln) < 500:
+        return True
     return False
 
 
 def strip_toc_block_after_summary_title(lines: list[str]) -> list[str]:
-    """
-    After a standalone '内容概要' line, drop everything until real prose:
-    a long line ending with 。 that is not TOC residue.
-    """
     out: list[str] = []
     i = 0
     while i < len(lines):
         ln = lines[i]
         bare = EXISTING_HEADING.sub("", ln).strip()
+        bare = TRAILING_HASH.sub("", bare).strip()
         out.append(ln)
-
         if bare == "内容概要":
             i += 1
-            # consume TOC / junk until real summary prose
             while i < len(lines):
                 nxt = lines[i].strip()
                 nxt_bare = EXISTING_HEADING.sub("", nxt).strip()
+                nxt_bare = TRAILING_HASH.sub("", nxt_bare).strip()
                 if not nxt_bare:
                     i += 1
                     continue
-                # real summary usually starts with 本次 / 本讲 / 本节 or is long + 。
-                if nxt_bare.startswith(("本次", "本讲", "本节", "本文", "本篇")):
+                if nxt_bare.startswith(("本次", "本讲", "本节", "本文", "本篇", "本分享")):
                     break
                 if (
                     len(nxt_bare) > 80
                     and nxt_bare.endswith("。")
-                    and not HAS_LEADER_DOTS.search(nxt_bare)
                     and not is_toc_line(nxt_bare)
                 ):
                     break
-                # another major title → stop (don't eat 金句收集/正文)
-                if nxt_bare in MAJOR or nxt_bare in SUBSECTION:
+                if nxt_bare in MAJOR_SET or nxt_bare in SUBSECTION:
                     break
-                if EXISTING_HEADING.match(nxt) and nxt_bare in MAJOR:
+                if EXISTING_HEADING.match(nxt) and nxt_bare in MAJOR_SET:
                     break
-                # still TOC / fragment → drop
                 i += 1
             continue
         i += 1
@@ -137,15 +142,16 @@ def reflow_paragraphs(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
     raw_lines = [ln.rstrip() for ln in text.split("\n")]
 
-    # First pass: drop pure TOC lines
     filtered: list[str] = []
     for ln in raw_lines:
         s = ln.strip()
+        s = TRAILING_HASH.sub("", s).strip()
         if is_toc_line(s):
             continue
-        filtered.append(ln)
-
-    # Second: after 内容概要, drop residual TOC block
+        if TRAILING_HASH.search(ln.strip()):
+            filtered.append(TRAILING_HASH.sub("", ln.strip()).rstrip())
+        else:
+            filtered.append(ln)
     filtered = strip_toc_block_after_summary_title(filtered)
 
     terminal = re.compile(r"[。！？；…」』”’]$")
@@ -163,6 +169,7 @@ def reflow_paragraphs(text: str) -> str:
             return
         p = "".join(buf)
         p = re.sub(r" {2,}", " ", p).strip()
+        p = TRAILING_HASH.sub("", p).strip()
         if p:
             paras.append(p)
         buf.clear()
@@ -171,6 +178,7 @@ def reflow_paragraphs(text: str) -> str:
         ln = ln.strip()
         if EXISTING_HEADING.match(ln):
             ln = EXISTING_HEADING.sub("", ln).strip()
+        ln = TRAILING_HASH.sub("", ln).strip()
         if not ln:
             if buf and terminal.search(buf[-1]):
                 flush()
@@ -178,7 +186,7 @@ def reflow_paragraphs(text: str) -> str:
         if is_toc_line(ln):
             continue
 
-        is_exact_title = ln in MAJOR or ln in SUBSECTION
+        is_exact_title = ln in MAJOR_SET or ln in SUBSECTION
         is_force = bool(force_start.match(ln))
         if buf and (is_exact_title or is_force or terminal.search(buf[-1])):
             flush()
@@ -188,11 +196,10 @@ def reflow_paragraphs(text: str) -> str:
         buf.append(ln)
     flush()
 
-    # mobile length balance
     balanced: list[str] = []
     max_len = 420
     for p in paras:
-        if p in MAJOR or p in SUBSECTION or len(p) <= max_len:
+        if p in MAJOR_SET or p in SUBSECTION or len(p) <= max_len:
             balanced.append(p)
             continue
         parts = re.split(r"(?<=[。！？；…])", p)
@@ -208,27 +215,48 @@ def reflow_paragraphs(text: str) -> str:
         if current.strip():
             balanced.append(current.strip())
 
-    # emit headings; collapse consecutive duplicate major titles
-    final: list[str] = []
-    last_major: str | None = None
+    # collect under each major; drop empties; emit fixed order
+    sections: dict[str, list[str]] = {m: [] for m in MAJOR}
+    current: str | None = None
+    preamble: list[str] = []
+    extras: list[str] = []
+
     for p in balanced:
-        if p in MAJOR:
-            if p == last_major:
-                continue  # skip duplicate ## 内容概要
-            if final and final[-1] != "":
-                final.append("")
-            final.append(f"## {p}")
-            final.append("")
-            last_major = p
+        if p in MAJOR_SET:
+            current = p
             continue
-        last_major = None
-        if p in SUBSECTION:
-            if final and final[-1] != "":
-                final.append("")
-            final.append(f"### {p}")
-            final.append("")
+        if current is None:
+            preamble.append(p)
+            continue
+        if current == "正文":
+            if p in SUBSECTION:
+                extras.append(f"### {p}")
+            else:
+                extras.append(p)
+        else:
+            sections[current].append(p)
+
+    final: list[str] = []
+    for p in preamble:
+        if p in MAJOR_SET:
             continue
         final.append(p)
+
+    for m in MAJOR:
+        body = sections[m]
+        if not body and m != "正文":
+            continue
+        if m == "正文" and not body and not extras:
+            continue
+        if final and final[-1] != "":
+            final.append("")
+        final.append(f"## {m}")
+        final.append("")
+        for b in body:
+            final.append(b)
+        if m == "正文":
+            for e in extras:
+                final.append(e)
 
     text = "\n\n".join(x for x in final if x is not None)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -253,7 +281,7 @@ def split_header_body(full: str) -> tuple[str, str]:
     in_meta = False
     for i, ln in enumerate(lines):
         stripped = ln.strip()
-        if stripped.startswith("#"):
+        if stripped.startswith("#") and not stripped.startswith("## "):
             header_end = i + 1
             continue
         if stripped.startswith(">"):
