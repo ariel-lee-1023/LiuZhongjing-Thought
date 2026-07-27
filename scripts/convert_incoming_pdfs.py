@@ -16,8 +16,9 @@ Extraction: PyMuPDF (fitz) — continuous CJK text, no hallucinated tables.
 Post-process:
   1. Aggressive CJK inter-character space cleanup
   2. Soft page-break handling (join mid-sentence across pages)
-  3. Intelligent paragraph reflow for Chinese prose
+  3. Intelligent paragraph reflow for Chinese prose + length balancing
   4. Force new paragraphs on 问：/答： and section headers
+  5. Light heading detection (short lines ending ：) → **bold** isolation
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ def fix_cjk_spacing(text: str) -> str:
 
 def reflow_paragraphs(text: str) -> str:
     """
-    Rejoin visual lines into readable Chinese paragraphs.
+    Rejoin visual lines into readable Chinese paragraphs, then balance length.
 
     Key behaviours:
     - Soft blanks (page breaks / layout gaps) do NOT force a paragraph break
@@ -91,6 +92,8 @@ def reflow_paragraphs(text: str) -> str:
     - Pure page numbers are dropped silently and never force a break.
     - Lines starting with 问：/答： or common section markers force a new paragraph.
     - Consecutive non-terminal lines are concatenated (no space for pure CJK).
+    - Overlong paragraphs are split only at sentence ends for mobile rhythm.
+    - Short heading-like lines (ending ：) receive **bold** + blank isolation.
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
     raw_lines = [ln.rstrip() for ln in text.split("\n")]
@@ -99,7 +102,11 @@ def reflow_paragraphs(text: str) -> str:
     force_start = re.compile(
         r"^(问[:：]|答[:：]|内容概要|金句收集|正文|"
         r"第[一二三四五六七八九十百]+[章节讲部]?|"
-        r"[（(]?[0-9]{1,2}[)）]|[0-9]+\.|[一二三四五六七八九十]+、)"
+        r"[（(]?[0-9]{1,2}[)）]|[0-9]+\.|[一二三四五六七八九十]+、|"
+        r"[【「].{1,20}[】」])"
+    )
+    heading_like = re.compile(
+        r"^.{1,40}[:：]$|^[【「].{1,30}[】」]$"
     )
 
     paras: list[str] = []
@@ -131,18 +138,51 @@ def reflow_paragraphs(text: str) -> str:
             continue
 
         # Hard break conditions
-        if buf and (force_start.match(ln) or terminal.search(buf[-1])):
+        if buf and (force_start.match(ln) or terminal.search(buf[-1]) or heading_like.match(ln)):
             flush()
 
         buf.append(ln)
         i += 1
 
     flush()
-    return "\n\n".join(paras)
+
+    # Balance overlong paragraphs for mobile reading rhythm
+    balanced: list[str] = []
+    max_len = 420
+    for p in paras:
+        if len(p) <= max_len:
+            balanced.append(p)
+            continue
+        parts = re.split(r"(?<=[。！？；…])", p)
+        current = ""
+        for part in parts:
+            if not part.strip():
+                continue
+            if current and len(current) + len(part) > max_len:
+                balanced.append(current.strip())
+                current = part
+            else:
+                current += part
+        if current.strip():
+            balanced.append(current.strip())
+
+    # Light heading formatting
+    final: list[str] = []
+    for p in balanced:
+        if heading_like.match(p) and len(p) < 45:
+            final.append("")
+            final.append(f"**{p}**")
+            final.append("")
+        else:
+            final.append(p)
+
+    text = "\n\n".join(x for x in final if x is not None)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def clean_layout(text: str) -> str:
-    """Full pipeline: CJK space fix → intelligent reflow."""
+    """Full pipeline: CJK space fix → intelligent reflow + balance."""
     text = fix_cjk_spacing(text)
     text = reflow_paragraphs(text)
     # Final safety collapse of any residual excessive blanks
@@ -170,7 +210,7 @@ def convert_one(pdf_path: Path, out_dir: Path) -> bool:
         f"# {pdf_path.stem}\n\n"
         f"> original PDF: `{pdf_path.name}`  \n"
         f"> folder: `LZJT/{out_dir.name}`  \n"
-        f"> converted with PyMuPDF + CJK reflow\n\n"
+        f"> converted with PyMuPDF + CJK reflow + mobile balance\n\n"
     )
     full = header + text
 
