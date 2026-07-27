@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Optimize formatting of existing Markdown content under content/LZJT/.
+Optimize formatting of existing Markdown under content/LZJT/.
 
-Standard LZJ layout recognition:
-  ## 内容概要
-  ## 金句收集
-  ## 正文
-  ### <subsection titles under 正文>
-
-CJK spacing fix preserves newlines (critical).
-NFKC normalizes compatibility ideographs (⾦→金, ⽂→文).
-Never rewrites author words; only layout and heading markers.
+Design (correct arrangement, not invented titles):
+  1. NFKC + CJK spacing that NEVER collapses newlines
+  2. Drop PDF TOC leader lines (dots + page numbers)
+  3. Reflow: join mid-sentence soft breaks; hard-break only on terminal punct
+  4. Promote a line to ## / ### ONLY when it is already an exact standalone
+     short line matching a known section marker — never inject mid-sentence
+  5. Unglue only when a known title sits at line START glued to following body
+  6. Never rewrite author words
 """
 
 from __future__ import annotations
@@ -31,26 +30,28 @@ SUBFOLDERS = [
 
 CJK = r"[\u2e80-\u2eff\u2f00-\u2fdf\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]"
 
-# Major structural titles → ## 
-MAJOR = ["内容概要", "金句收集", "正文"]
-MAJOR_SET = set(MAJOR)
-
-# Common subsection titles → ###  (extend as more patterns appear)
-SUBSECTION = [
+# Only promote when a line is EXACTLY this (after strip) — never mid-sentence inject
+MAJOR = {"内容概要", "金句收集", "正文"}
+# Subsections only when exact standalone line
+SUBSECTION = {
     "对未来社会政治的潜在影响",
     "AI 的信息污染问题",
     "学术定位的改变",
-]
-SUBSECTION_SET = set(SUBSECTION)
+    "世界文明起源与早期传播路径",
+    "殷商时期的方国概念与夏、诸夏概念的产生",
+    "秦汉到明清时期的认同演变",
+    "晚清到民国的国家认同建构过程",
+    "国民党北伐后政治路径的形成",
+    "答问环节",
+}
 
-# All titles that force a structural break (longest first for inject)
-STRUCTURAL = sorted(MAJOR + SUBSECTION, key=len, reverse=True)
-
-TOC_LINE = re.compile(r"^.{0,50}?\s*[.…·•\-—–]{3,}\s*\d{1,4}\s*$")
-GARBAGE_TOC = re.compile(
-    r"^(\d{1,4})?#{0,3}\s*(AI\s*的信息污染问题|学术定位的改变|对未来社会政治的潜在影响)?\s*$"
+# TOC: title + leader dots/ellipsis + page number
+TOC_LINE = re.compile(
+    r"^.{0,80}?\s*[.…·•\-—–\.]{4,}\s*\d{1,4}\s*$"
 )
-EXISTING_HEADING = re.compile(r"^#{1,3}\s+")
+# Pure page number or pure decorative
+JUNK = re.compile(r"^(\d{1,4}|[·•—–\-…]{1,8})$")
+EXISTING_HEADING = re.compile(r"^#{1,6}\s+")
 
 
 def content_hash(text: str) -> str:
@@ -58,7 +59,7 @@ def content_hash(text: str) -> str:
 
 
 def fix_cjk_spacing(text: str) -> str:
-    """Collapse only horizontal whitespace between CJK — never newlines."""
+    """Only horizontal whitespace between CJK — never newlines."""
     text = re.sub(rf"({CJK})[ \t]+(?={CJK})", r"\1", text)
     punct = r"[，。！？；：、“”‘’（）【】《》〈〉「」『』、]"
     text = re.sub(rf"({CJK})[ \t]+({punct})", r"\1\2", text)
@@ -71,29 +72,33 @@ def fix_cjk_spacing(text: str) -> str:
     return text
 
 
-def inject_structural_breaks(text: str) -> str:
+def unglue_leading_titles(text: str) -> str:
     """
-    Force major structural titles (内容概要/金句收集/正文) onto their own lines
-    when glued. Subsection titles are only promoted when they already form a
-    standalone line — never split mid-sentence occurrences in the summary.
+    Only split when a known title sits at the START of a line and is glued
+    directly to following body (PDF-extractor artifact). Never touches
+    mid-sentence occurrences.
     """
-    for title in MAJOR:
-        text = re.sub(rf"(?<!\n)({re.escape(title)})", r"\n\1", text)
-        text = re.sub(rf"({re.escape(title)})(?!\n)(?=\S)", r"\1\n", text)
+    titles = sorted(MAJOR | SUBSECTION, key=len, reverse=True)
+    for title in titles:
+        # line-start (or start of string) + title + immediate CJK/quote
+        text = re.sub(
+            rf"(^|\n)({re.escape(title)})(?=[\u4e00-\u9fff“\"「『])",
+            r"\1\2\n",
+            text,
+        )
     return text
 
 
 def reflow_paragraphs(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
-    text = inject_structural_breaks(text)
     raw_lines = [ln.rstrip() for ln in text.split("\n")]
 
     terminal = re.compile(r"[。！？；…」』”’]$")
+    # Force new para only for dialogue markers / numbered items at line start
     force_start = re.compile(
-        r"^(问[:：]|答[:：]|内容概要|金句收集|正文|"
+        r"^(问[:：]|答[:：]|提问[一二三四五六七八九十]+[:：]?|"
         r"第[一二三四五六七八九十百]+[章节讲部]?|"
-        r"[（(]?[0-9]{1,2}[)）]|[0-9]+\.|[一二三四五六七八九十]+、|"
-        r"[【「].{1,20}[】」])"
+        r"[（(]?[0-9]{1,2}[)）]|[0-9]+\.|[一二三四五六七八九十]+、)"
     )
 
     paras: list[str] = []
@@ -111,39 +116,39 @@ def reflow_paragraphs(text: str) -> str:
     for ln in raw_lines:
         ln = ln.strip()
 
-        # strip existing markdown heading markers so we re-emit cleanly
+        # strip existing markdown heading markers; re-emit cleanly later
         if EXISTING_HEADING.match(ln):
             ln = EXISTING_HEADING.sub("", ln).strip()
-
-        if re.fullmatch(r"\d{1,4}", ln) or ln in {"·", "•", "—", "–", "-", "…"}:
-            continue
-        if GARBAGE_TOC.match(ln) and ln not in MAJOR_SET and ln not in SUBSECTION_SET:
-            continue
-        if TOC_LINE.match(ln):
-            continue
 
         if not ln:
             if buf and terminal.search(buf[-1]):
                 flush()
             continue
 
-        is_structural = (
-            ln in MAJOR_SET
-            or ln in SUBSECTION_SET
-            or force_start.match(ln)
-        )
-        if buf and (is_structural or terminal.search(buf[-1])):
+        if JUNK.match(ln) or TOC_LINE.match(ln):
+            continue
+
+        # Exact known title on its own line → structural break
+        is_exact_title = ln in MAJOR or ln in SUBSECTION
+        is_force = bool(force_start.match(ln))
+
+        if buf and (is_exact_title or is_force or terminal.search(buf[-1])):
             flush()
+
+        # If exact title, emit as its own para immediately
+        if is_exact_title:
+            paras.append(ln)
+            continue
 
         buf.append(ln)
 
     flush()
 
-    # mobile length balance
+    # mobile length balance (~420 CJK chars), only at sentence boundaries
     balanced: list[str] = []
     max_len = 420
     for p in paras:
-        if p in MAJOR_SET or p in SUBSECTION_SET or len(p) <= max_len:
+        if p in MAJOR or p in SUBSECTION or len(p) <= max_len:
             balanced.append(p)
             continue
         parts = re.split(r"(?<=[。！？；…])", p)
@@ -159,16 +164,16 @@ def reflow_paragraphs(text: str) -> str:
         if current.strip():
             balanced.append(current.strip())
 
-    # emit with standard hierarchy
+    # Emit: only exact standalone titles get ## / ###
     final: list[str] = []
     for p in balanced:
-        if p in MAJOR_SET:
+        if p in MAJOR:
             if final and final[-1] != "":
                 final.append("")
             final.append(f"## {p}")
             final.append("")
             continue
-        if p in SUBSECTION_SET:
+        if p in SUBSECTION:
             if final and final[-1] != "":
                 final.append("")
             final.append(f"### {p}")
@@ -182,9 +187,10 @@ def reflow_paragraphs(text: str) -> str:
 
 
 def clean_layout(text: str) -> str:
-    # Compatibility ideographs → standard forms (⾦→金, ⽂→文, …)
     text = unicodedata.normalize("NFKC", text)
     text = fix_cjk_spacing(text)
+    text = unglue_leading_titles(text)
+    text = unglue_leading_titles(text)  # second pass for newly split line starts
     text = reflow_paragraphs(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
