@@ -2,7 +2,14 @@
 """
 Optimize formatting of existing Markdown content under content/LZJT/.
 
-Aggressive structural-title injection + CJK reflow + mobile paragraph balancing.
+Standard LZJ layout recognition:
+  ## 内容概要
+  ## 金句收集
+  ## 正文
+  ### <subsection titles under 正文>
+
+CJK spacing fix preserves newlines (critical).
+NFKC normalizes compatibility ideographs (⾦→金, ⽂→文).
 Never rewrites author words; only layout and heading markers.
 """
 
@@ -11,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 CONTENT_ROOT = Path("content") / "LZJT"
@@ -23,30 +31,26 @@ SUBFOLDERS = [
 
 CJK = r"[\u2e80-\u2eff\u2f00-\u2fdf\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]"
 
-# Titles that must become isolated headings
-STRUCTURAL = [
+# Major structural titles → ## 
+MAJOR = ["内容概要", "金句收集", "正文"]
+MAJOR_SET = set(MAJOR)
+
+# Common subsection titles → ###  (extend as more patterns appear)
+SUBSECTION = [
     "对未来社会政治的潜在影响",
     "AI 的信息污染问题",
     "学术定位的改变",
-    "内容概要",
-    "金句收集",
-    "正文",
 ]
+SUBSECTION_SET = set(SUBSECTION)
 
-SUBSECTION_SET = {
-    "AI 的信息污染问题",
-    "学术定位的改变",
-    "对未来社会政治的潜在影响",
-}
+# All titles that force a structural break (longest first for inject)
+STRUCTURAL = sorted(MAJOR + SUBSECTION, key=len, reverse=True)
 
-MAJOR_SET = {"内容概要", "金句收集", "正文"}
-
-# TOC leader lines (title + dots + page number)
-TOC_LINE = re.compile(r"^.{1,40}?\s*[.…·•\-—–]{3,}\s*\d{1,3}$")
-# Polluted TOC fragments like "2### AI 的信息污染问题" or bare page numbers
+TOC_LINE = re.compile(r"^.{0,50}?\s*[.…·•\-—–]{3,}\s*\d{1,4}\s*$")
 GARBAGE_TOC = re.compile(
-    r"^(\d{1,3})?#{0,3}\s*(AI\s*的信息污染问题|学术定位的改变|对未来社会政治的潜在影响)?\s*$"
+    r"^(\d{1,4})?#{0,3}\s*(AI\s*的信息污染问题|学术定位的改变|对未来社会政治的潜在影响)?\s*$"
 )
+EXISTING_HEADING = re.compile(r"^#{1,3}\s+")
 
 
 def content_hash(text: str) -> str:
@@ -54,27 +58,28 @@ def content_hash(text: str) -> str:
 
 
 def fix_cjk_spacing(text: str) -> str:
-    text = re.sub(rf"({CJK})\s+(?={CJK})", r"\1", text)
+    """Collapse only horizontal whitespace between CJK — never newlines."""
+    text = re.sub(rf"({CJK})[ \t]+(?={CJK})", r"\1", text)
     punct = r"[，。！？；：、“”‘’（）【】《》〈〉「」『』、]"
-    text = re.sub(rf"({CJK})\s+({punct})", r"\1\2", text)
-    text = re.sub(rf"({punct})\s+({CJK})", r"\1\2", text)
-    text = re.sub(rf"([（【《〈「『“‘])\s+", r"\1", text)
-    text = re.sub(rf"\s+([）】》〉」』”’])", r"\1", text)
-    text = re.sub(r"(?<=\d)\s+(?=\d)", "", text)
-    text = re.sub(r"(?<=\d)\s*[~～—–-]\s*(?=\d)", "~", text)
+    text = re.sub(rf"({CJK})[ \t]+({punct})", r"\1\2", text)
+    text = re.sub(rf"({punct})[ \t]+({CJK})", r"\1\2", text)
+    text = re.sub(rf"([（【《〈「『“‘])[ \t]+", r"\1", text)
+    text = re.sub(rf"[ \t]+([）】》〉」』”’])", r"\1", text)
+    text = re.sub(r"(?<=\d)[ \t]+(?=\d)", "", text)
+    text = re.sub(r"(?<=\d)[ \t]*[~～—–-][ \t]*(?=\d)", "~", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text
 
 
 def inject_structural_breaks(text: str) -> str:
     """
-    Force every occurrence of a known structural title onto its own line.
-    This is the only reliable way to undo PDF-extractor gluing.
+    Force known structural titles onto their own lines when glued to body text.
+    Order longest-first so longer titles win.
     """
     for title in STRUCTURAL:
-        # Always put a newline before the title (unless already at line start)
+        # newline before title if not already at line start
         text = re.sub(rf"(?<!\n)({re.escape(title)})", r"\n\1", text)
-        # Always put a newline after the title when more text follows on the same "line"
+        # newline after title when more non-space text follows on same line
         text = re.sub(rf"({re.escape(title)})(?!\n)(?=\S)", r"\1\n", text)
     return text
 
@@ -104,45 +109,42 @@ def reflow_paragraphs(text: str) -> str:
             paras.append(p)
         buf.clear()
 
-    i = 0
-    while i < len(raw_lines):
-        ln = raw_lines[i].strip()
+    for ln in raw_lines:
+        ln = ln.strip()
 
-        # Drop pure page numbers and pure decorative dots
+        # strip existing markdown heading markers so we re-emit cleanly
+        if EXISTING_HEADING.match(ln):
+            ln = EXISTING_HEADING.sub("", ln).strip()
+
         if re.fullmatch(r"\d{1,4}", ln) or ln in {"·", "•", "—", "–", "-", "…"}:
-            i += 1
             continue
-
-        # Drop polluted TOC fragments left by earlier broken runs
-        if GARBAGE_TOC.match(ln) and not (ln in MAJOR_SET or ln in SUBSECTION_SET):
-            i += 1
+        if GARBAGE_TOC.match(ln) and ln not in MAJOR_SET and ln not in SUBSECTION_SET:
+            continue
+        if TOC_LINE.match(ln):
             continue
 
         if not ln:
             if buf and terminal.search(buf[-1]):
                 flush()
-            i += 1
             continue
 
         is_structural = (
             ln in MAJOR_SET
             or ln in SUBSECTION_SET
-            or TOC_LINE.match(ln)
             or force_start.match(ln)
         )
         if buf and (is_structural or terminal.search(buf[-1])):
             flush()
 
         buf.append(ln)
-        i += 1
 
     flush()
 
-    # Balance overlong paragraphs
+    # mobile length balance
     balanced: list[str] = []
     max_len = 420
     for p in paras:
-        if len(p) <= max_len:
+        if p in MAJOR_SET or p in SUBSECTION_SET or len(p) <= max_len:
             balanced.append(p)
             continue
         parts = re.split(r"(?<=[。！？；…])", p)
@@ -158,27 +160,21 @@ def reflow_paragraphs(text: str) -> str:
         if current.strip():
             balanced.append(current.strip())
 
-    # Emit with proper heading isolation; drop pure TOC leader lines
+    # emit with standard hierarchy
     final: list[str] = []
     for p in balanced:
-        if TOC_LINE.match(p):
-            # Skip the PDF TOC block — real ## headings replace it
-            continue
-
         if p in MAJOR_SET:
             if final and final[-1] != "":
                 final.append("")
             final.append(f"## {p}")
             final.append("")
             continue
-
         if p in SUBSECTION_SET:
             if final and final[-1] != "":
                 final.append("")
             final.append(f"### {p}")
             final.append("")
             continue
-
         final.append(p)
 
     text = "\n\n".join(x for x in final if x is not None)
@@ -187,6 +183,8 @@ def reflow_paragraphs(text: str) -> str:
 
 
 def clean_layout(text: str) -> str:
+    # Compatibility ideographs → standard forms (⾦→金, ⽂→文, …)
+    text = unicodedata.normalize("NFKC", text)
     text = fix_cjk_spacing(text)
     text = reflow_paragraphs(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
