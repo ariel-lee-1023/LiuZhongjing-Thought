@@ -32,12 +32,21 @@ incoming/
 
 3. Push (or just upload via the GitHub web UI).  
    The Action will automatically:
-   - convert every `*.pdf` with **PyMuPDF** + CJK-aware layout cleanup & paragraph reflow
+   - convert every `*.pdf` with **PyMuPDF** + CJK-aware layout cleanup & paragraph reflow + mobile length balancing
    - write the `.md` files into the corresponding place under `content/LZJT/`
    - delete the source PDF (keeps the repo light)
    - commit & push the result
 
 You can also trigger it manually: **Actions → Convert incoming LZJT PDFs → Run workflow**.
+
+## Automatic content formatting optimizer
+
+Existing Markdown under `content/LZJT/` is kept mobile-friendly by:
+
+- `scripts/optimize_formatting.py` — re-applies CJK spacing cleanup, intelligent paragraph reflow, length balancing (~420 chars max per block, split only at sentence ends), and light heading isolation (`**...**` + blank lines for short title-like lines ending in `：`).
+- GitHub Action **Optimize LZJT content formatting** runs on every Monday (03:00 UTC) and can be triggered manually.
+
+No author wording is ever changed — only layout and blank-line hierarchy.
 
 ## Output layout
 
@@ -55,5 +64,5 @@ content/
 ## Notes
 
 - Extraction uses PyMuPDF (layout-aware, continuous CJK text).  
-  Post-processing removes inter-character spacing artifacts common in Chinese PDFs, joins mid-sentence lines across page breaks, and produces readable paragraphs.
+  Post-processing removes inter-character spacing artifacts common in Chinese PDFs, joins mid-sentence lines across page breaks, balances paragraph length for mobile reading, and isolates detected section titles.
 - The old 得到大脑 OpenAPI path is no longer used — the public API cannot see the deep folder PDFs.
