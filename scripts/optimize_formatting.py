@@ -73,13 +73,12 @@ def fix_cjk_spacing(text: str) -> str:
 
 def inject_structural_breaks(text: str) -> str:
     """
-    Force known structural titles onto their own lines when glued to body text.
-    Order longest-first so longer titles win.
+    Force major structural titles (内容概要/金句收集/正文) onto their own lines
+    when glued. Subsection titles are only promoted when they already form a
+    standalone line — never split mid-sentence occurrences in the summary.
     """
-    for title in STRUCTURAL:
-        # newline before title if not already at line start
+    for title in MAJOR:
         text = re.sub(rf"(?<!\n)({re.escape(title)})", r"\n\1", text)
-        # newline after title when more non-space text follows on same line
         text = re.sub(rf"({re.escape(title)})(?!\n)(?=\S)", r"\1\n", text)
     return text
 
