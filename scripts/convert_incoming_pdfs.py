@@ -3,7 +3,9 @@
 Convert PDFs dropped into incoming/ into clean Markdown under content/LZJT/
 
 Same design as optimize_formatting.py:
-  arrange by real structure, never invent titles mid-sentence.
+  - drop PDF TOC entirely (leader dots + block after 内容概要)
+  - arrange by real structure, never invent mid-sentence titles
+  - unglue only at line-start title+body artifacts
 """
 
 from __future__ import annotations
@@ -40,8 +42,9 @@ SUBSECTION = {
     "答问环节",
 }
 
-TOC_LINE = re.compile(r"^.{0,80}?\s*[.…·•\-—–\.]{4,}\s*\d{1,4}\s*$")
+HAS_LEADER_DOTS = re.compile(r"[.…·•]{4,}")
 JUNK = re.compile(r"^(\d{1,4}|[·•—–\-…]{1,8})$")
+PAGE_GLUE = re.compile(r"^\d{1,3}[\u4e00-\u9fff“\"「]")
 EXISTING_HEADING = re.compile(r"^#{1,6}\s+")
 
 
@@ -89,9 +92,62 @@ def unglue_leading_titles(text: str) -> str:
     return text
 
 
+def is_toc_line(ln: str) -> bool:
+    if not ln:
+        return False
+    if JUNK.match(ln):
+        return True
+    if HAS_LEADER_DOTS.search(ln):
+        return True
+    if PAGE_GLUE.match(ln):
+        return True
+    return False
+
+
+def strip_toc_block_after_summary_title(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        bare = EXISTING_HEADING.sub("", ln).strip()
+        out.append(ln)
+        if bare == "内容概要":
+            i += 1
+            while i < len(lines):
+                nxt = lines[i].strip()
+                nxt_bare = EXISTING_HEADING.sub("", nxt).strip()
+                if not nxt_bare:
+                    i += 1
+                    continue
+                if nxt_bare.startswith(("本次", "本讲", "本节", "本文", "本篇")):
+                    break
+                if (
+                    len(nxt_bare) > 80
+                    and nxt_bare.endswith("。")
+                    and not HAS_LEADER_DOTS.search(nxt_bare)
+                    and not is_toc_line(nxt_bare)
+                ):
+                    break
+                if nxt_bare in MAJOR or nxt_bare in SUBSECTION:
+                    break
+                if EXISTING_HEADING.match(nxt) and nxt_bare in MAJOR:
+                    break
+                i += 1
+            continue
+        i += 1
+    return out
+
+
 def reflow_paragraphs(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\f", "\n")
     raw_lines = [ln.rstrip() for ln in text.split("\n")]
+
+    filtered: list[str] = []
+    for ln in raw_lines:
+        if is_toc_line(ln.strip()):
+            continue
+        filtered.append(ln)
+    filtered = strip_toc_block_after_summary_title(filtered)
 
     terminal = re.compile(r"[。！？；…」』”’]$")
     force_start = re.compile(
@@ -112,7 +168,7 @@ def reflow_paragraphs(text: str) -> str:
             paras.append(p)
         buf.clear()
 
-    for ln in raw_lines:
+    for ln in filtered:
         ln = ln.strip()
         if EXISTING_HEADING.match(ln):
             ln = EXISTING_HEADING.sub("", ln).strip()
@@ -120,7 +176,7 @@ def reflow_paragraphs(text: str) -> str:
             if buf and terminal.search(buf[-1]):
                 flush()
             continue
-        if JUNK.match(ln) or TOC_LINE.match(ln):
+        if is_toc_line(ln):
             continue
         is_exact_title = ln in MAJOR or ln in SUBSECTION
         is_force = bool(force_start.match(ln))
@@ -152,13 +208,18 @@ def reflow_paragraphs(text: str) -> str:
             balanced.append(current.strip())
 
     final: list[str] = []
+    last_major: str | None = None
     for p in balanced:
         if p in MAJOR:
+            if p == last_major:
+                continue
             if final and final[-1] != "":
                 final.append("")
             final.append(f"## {p}")
             final.append("")
+            last_major = p
             continue
+        last_major = None
         if p in SUBSECTION:
             if final and final[-1] != "":
                 final.append("")
