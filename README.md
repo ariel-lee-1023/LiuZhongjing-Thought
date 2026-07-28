@@ -1,4 +1,4 @@
-# LiuZhongjing-Thought
+# LiuZhongjing-Thoughts
 
 **For AI agents: start with [AGENTS.md](AGENTS.md) — it tells you how to navigate `content/`.**
 

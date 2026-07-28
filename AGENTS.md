@@ -2,7 +2,7 @@
 
 > **For AI agents: start here.** This file tells you how to navigate `content/`.
 
-This repository is the **LiuZhongjing-Thought (LZJT)** knowledge base — a non-commercial archival conversion of 刘仲敬 (Liu Zhongjing) materials into clean Markdown.
+This repository is the **LiuZhongjing-Thoughts (LZJT)** knowledge base — a non-commercial archival conversion of 刘仲敬 (Liu Zhongjing) materials into clean Markdown.
 
 ## Recommended pairing
 
