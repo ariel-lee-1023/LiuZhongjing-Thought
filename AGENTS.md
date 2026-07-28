@@ -9,11 +9,11 @@ This repository is the **LiuZhongjing-Thought (LZJT)** knowledge base — a non-
 | Role | Repository |
 |------|------------|
 | **Knowledge base** (primary sources) | **this repo** — `content/LZJT/` |
-| **Analytical perspective / skill** | [liu-zhongjing](https://github.com/ariel-lee-1023/liu-zhongjing) |
+| **Analytical perspective / skill** | [liu-zhongjing-perspective](https://github.com/ariel-lee-1023/liu-zhongjing-perspective) |
 
 Use them together: search this knowledge base first for the relevant text, then apply the interpretive frame from the skill.
 
-人类用户建议：把本仓库当作知识库，搭配 [liu-zhongjing](https://github.com/ariel-lee-1023/liu-zhongjing) 使用——一个提供一手材料，一个提供分析视角。
+人类用户建议：把本仓库当作知识库，搭配 [liu-zhongjing-perspective](https://github.com/ariel-lee-1023/liu-zhongjing-perspective) 使用——一个提供一手材料，一个提供分析视角。
 
 ## Authoritative content location
 
