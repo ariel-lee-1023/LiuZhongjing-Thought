@@ -1,4 +1,4 @@
-# LiuZhongjing-Thought
+# LiuZhongjing-Thoughts
 
 **For AI agents: start with [AGENTS.md](AGENTS.md) — it tells you how to navigate `content/`.**
 
@@ -7,10 +7,10 @@ Archive of **刘仲敬思想 (LZJT)** PDFs → clean Markdown.
 > **建议搭配使用 / Recommended pairing**  
 > 本仓库是**知识库**（原始文本归档）。  
 > 分析视角 / skill 请搭配：  
-> **[liu-zhongjing](https://github.com/ariel-lee-1023/liu-zhongjing)**  
+> **[liu-zhongjing-perspective](https://github.com/ariel-lee-1023/liu-zhongjing-perspective)**  
 > 一个提供一手材料，一个提供解读框架。  
 > This repository is the **knowledge base**.  
-> For the analytical perspective / skill, use **[liu-zhongjing](https://github.com/ariel-lee-1023/liu-zhongjing)**.  
+> For the analytical perspective / skill, use **[liu-zhongjing-perspective](https://github.com/ariel-lee-1023/liu-zhongjing-perspective)**.  
 > One supplies the primary sources; the other supplies the interpretive frame.
 
 > **Intellectual Property Notice**  
